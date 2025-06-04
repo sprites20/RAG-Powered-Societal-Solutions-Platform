@@ -8,6 +8,49 @@
     box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
   }
   
+  .application-form {
+    background-color: #ffffff;
+    border-radius: 10px;
+    padding: 25px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+  }
+
+  .application-form h2 {
+    font-size: 1.8em;
+    color: #333;
+    margin-bottom: 20px;
+    text-align: center;
+  }
+
+  .form-group {
+    margin-bottom: 15px;
+    text-align: left;
+  }
+
+  .form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+    color: #555;
+  }
+
+  .form-group input[type="text"],
+  .form-group input[type="number"],
+  .form-group textarea {
+    width: calc(100% - 20px); /* Account for padding */
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 1em;
+    box-sizing: border-box; /* Include padding in width */
+  }
+
+  .form-group textarea {
+    resize: vertical;
+    min-height: 80px;
+  }
+
   .overall-drop-area {
     border: 2px dashed #90caf9; /* Dashed border for overall drop area */
     border-radius: 10px;

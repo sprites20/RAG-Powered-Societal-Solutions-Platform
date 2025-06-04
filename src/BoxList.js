@@ -19,6 +19,9 @@ const BoxList = () => {
   const jobsPerPage = 9; // jobs to show per page
   const [currentPage, setCurrentPage] = useState(1);
   const [uploadedFiles, setUploadedFiles] = useState([]); // State to store uploaded files for the whole list
+  const [skills, setSkills] = useState('');
+  const [experience, setExperience] = useState('');
+  const [preferences, setPreferences] = useState('');
 
   const totalPages = Math.ceil(jobData.length / jobsPerPage);
 
@@ -65,6 +68,39 @@ const BoxList = () => {
 
   return (
     <div className="box-list-container">
+      <div className="application-form">
+        <h2>Your Application Details</h2>
+        <div className="form-group">
+          <label htmlFor="skills">Skills:</label>
+          <input 
+            type="text" 
+            id="skills" 
+            value={skills} 
+            onChange={(e) => setSkills(e.target.value)} 
+            placeholder="e.g., React, Node.js, AWS"
+          />
+        </div>
+        <div className="form-group">
+          <label htmlFor="experience">Experience (Years):</label>
+          <input 
+            type="number" 
+            id="experience" 
+            value={experience} 
+            onChange={(e) => setExperience(e.target.value)} 
+            placeholder="e.g., 5"
+          />
+        </div>
+        <div className="form-group">
+          <label htmlFor="preferences">Preferences:</label>
+          <textarea 
+            id="preferences" 
+            value={preferences} 
+            onChange={(e) => setPreferences(e.target.value)} 
+            placeholder="e.g., Remote, Full-time, specific industries"
+          ></textarea>
+        </div>
+      </div>
+
       <div 
         className="overall-drop-area"
         onDragOver={handleDragOver}
