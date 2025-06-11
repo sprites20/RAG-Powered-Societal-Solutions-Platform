@@ -7,6 +7,18 @@ from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 import re
+from flask import Flask, request, jsonify
+from flask_socketio import SocketIO
+import os
+from werkzeug.utils import secure_filename
+import json
+import signal
+import time
+import duckdb
+from collections import defaultdict
+from flask_cors import CORS
+import fitz  # PyMuPDF
+
 
 nltk.download('punkt')
 nltk.download('stopwords')
@@ -100,41 +112,51 @@ class MMapChainedHashTable:
     def insert(self, key, items):
         bucket = self._hash(key)
         node_offset = self._read_slot(bucket)
+
+        merged_items = set(items)
         prev_offset = 0
+        chain_head = node_offset
+
+        # Traverse the chain and collect items for this key
         while node_offset != 0:
             node = self._read_node(node_offset)
             if node["key"] == key:
-                # Update: append unique items
-                new_items = node["items"][:]
-                for item in items:
-                    if item not in new_items:
-                        new_items.append(item)
-                # Write back updated node (assume size fits original node size for simplicity)
-                if len(new_items) <= node["count"]:  # If smaller or same size, just overwrite
-                    self._write_node(node_offset, key, new_items, node["next"])
-                else:
-                    # For simplicity, allocate new node, insert, remove old by linking prev
-                    new_node_size = self.NODE_HEADER_SIZE + len(new_items)*4
-                    new_node_offset = self._alloc_node(new_node_size)
-                    self._write_node(new_node_offset, key, new_items, node["next"])
-                    if prev_offset == 0:
-                        self._write_slot(bucket, new_node_offset)
-                    else:
-                        # update prev node's next pointer to new node
-                        prev_node = self._read_node(prev_offset)
-                        self._write_node(prev_offset, prev_node["key"], prev_node["items"], new_node_offset)
-                    # (old node remains garbage, free list needed in production)
-                return
-
-            prev_offset = node_offset
+                merged_items.update(node["items"])
+            else:
+                prev_offset = node_offset  # Track last non-matching node
             node_offset = node["next"]
 
-        # Not found: insert new node at head of chain
-        new_node_size = self.NODE_HEADER_SIZE + len(items)*4
+        # Remove all nodes for this key by rebuilding the chain without them
+        node_offset = chain_head
+        new_chain_head = 0
+        last_node_offset = 0
+
+        while node_offset != 0:
+            node = self._read_node(node_offset)
+            next_offset = node["next"]
+
+            if node["key"] != key:
+                if new_chain_head == 0:
+                    new_chain_head = node_offset
+                else:
+                    prev_node = self._read_node(last_node_offset)
+                    self._write_node(last_node_offset, prev_node["key"], prev_node["items"], node_offset)
+                last_node_offset = node_offset
+
+            node_offset = next_offset
+
+        if last_node_offset != 0:
+            # Ensure the new tail of the chain points to null
+            prev_node = self._read_node(last_node_offset)
+            self._write_node(last_node_offset, prev_node["key"], prev_node["items"], 0)
+
+        # Now insert the new merged node at head
+        new_node_items = list(merged_items)
+        new_node_size = self.NODE_HEADER_SIZE + len(new_node_items) * 4
         new_node_offset = self._alloc_node(new_node_size)
-        chain_head = self._read_slot(bucket)
-        self._write_node(new_node_offset, key, items, chain_head)
+        self._write_node(new_node_offset, key, new_node_items, new_chain_head)
         self._write_slot(bucket, new_node_offset)
+
     def remove_doc_id(self, key, doc_id):
         bucket = self._hash(key)
         node_offset = self._read_slot(bucket)
@@ -232,8 +254,6 @@ if __name__ == "__main__":
     print("python docs:", ht.get("programming")) # Should show [2, 3]
     ht.close()
 """
-import duckdb
-from collections import defaultdict
 
 def score_jobs(ht, resume_tokens, top_n=10):
     scores = defaultdict(int)
@@ -258,6 +278,7 @@ def paginate_results(results, page_size=10):
     for i in range(0, len(results), page_size):
         page_number = (i // page_size) + 1
         pages[page_number] = results[i:i + page_size]
+    print("Pages: ", pages)
     return pages
 
 def get_job_snippet(con, doc_id):
@@ -282,10 +303,70 @@ def extract_text_from_pdf(pdf_path):
     for page in doc:
         text += page.get_text()
     return text
+
+def get_page(con, pages, page_num):
+    # Example: send page 1 to client
     
+    page_data = []
+
+    for doc_id, score in pages.get(page_num, []):
+        job = get_job_snippet(con, doc_id)
+        if job:
+            job["score"] = score
+            page_data.append(job)
+    return page_data
+
+app = Flask(__name__)
+CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+def close_process_by_pid(pid):
+    """Kill a process by its PID (works on both Windows and Linux)."""
+    try:
+        print(f"Closing process with PID {pid}...")
+        if os.name == 'nt':  # Windows
+            os.kill(int(pid), 9)  # Hard kill on Windows
+        else:  # Linux/Mac
+            os.kill(int(pid), signal.SIGKILL)  # Proper kill on Unix-based systems
+    except (ValueError, ProcessLookupError, PermissionError):
+        print(f"Failed to close process {pid}. It may not exist or lack permissions.")
+
+def extract_pid_from_error(error_message):
+    """Extract PID from DuckDB error message."""
+    match = re.search(r"PID (\d+)", error_message)
+    return match.group(1) if match else None
+
+
+def connect_to_duckdb(db_path):
+    """Try connecting to DuckDB and handle locked database errors."""
+    attempts = 3  # Number of retries
+    for attempt in range(attempts):
+        try:
+            print(f"Attempt {attempt + 1}: Connecting to DuckDB at {db_path}...")
+            conn = duckdb.connect(db_path)
+            print("Connected successfully!")
+            return conn
+        except duckdb.IOException as e:
+            error_msg = str(e)
+            print("Database lock detected:", error_msg)
+
+            # Extract PID from error message and close it
+            pid = extract_pid_from_error(error_msg)
+            if pid:
+                close_process_by_pid(pid)
+                time.sleep(1)  # Wait before retrying
+            else:
+                print("No PID found in error message.")
+                raise  # Raise if the error is not related to PID lock
+
+    print("Failed to connect after multiple attempts.")
+    return None  # Return None if unable to connect
+    
+con = connect_to_duckdb('linkedin_jobs.db')
+ht = MMapChainedHashTable()
+
 if __name__ == "__main__":
     # Connect to your DuckDB database
-    con = duckdb.connect("linkedin_jobs.db")
 
     # Load the first 100 jobs with combined text fields
     jobs = con.execute("""
@@ -309,14 +390,15 @@ if __name__ == "__main__":
     resume_text = extract_text_from_pdf("resume.pdf")
     # Preprocess the resume text
     resume_tokens = preprocess_text(resume_text)
-
+    
     # Create and fill the inverted index
-    ht = MMapChainedHashTable()
-    """
-    for id, search_text in jobs:
-        print("Processing id:", id)
-        process_text_string(ht, search_text, id)
-    """
+    
+    
+    if False:
+        for id, search_text in jobs:
+            print("Processing id:", id)
+            process_text_string(ht, search_text, id)
+    
     # Example keyword queries
     print("Architecture docs:", ht.get("architecture"))
     # Get top matching jobs
@@ -324,23 +406,101 @@ if __name__ == "__main__":
 
     # Paginate top jobs
     pages = paginate_results(top_jobs, page_size=10)
-
-    # Example: send page 1 to client
-    page_num = 1
-    page_data = []
-
-    for doc_id, score in pages.get(page_num, []):
-        job = get_job_snippet(con, doc_id)
-        if job:
-            job["score"] = score
-            page_data.append(job)
+    page_data = get_page(con, pages, 1)
+    
 
     # Example output for client
     import json
-    print(json.dumps({
-        "page": page_num,
+    if False:
+        print(json.dumps({
+            "page": page_num,
+            "total_pages": len(pages),
+            "results": page_data
+        }, indent=2))
+
+UPLOAD_FOLDER = 'uploads'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+@app.route('/job')
+def get_job():
+    job_id = request.args.get('id')
+    if not job_id:
+        return jsonify({'error': 'Missing job ID'}), 400
+
+    try:
+        job_id = int(job_id)
+
+        result = con.execute("SELECT * FROM linkedin_jobs WHERE id = $1", [job_id]).fetchall()
+        columns = [desc[0] for desc in con.description]
+
+        if not result:
+            return jsonify({'error': 'Job not found'}), 404
+
+        job = dict(zip(columns, result[0]))
+        return jsonify(job)
+
+    except ValueError:
+        return jsonify({'error': 'Invalid job ID'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@socketio.on('connect')
+def handle_connect():
+    print(f"Client connected with sid: {request.sid}")
+    socketio.emit('assign_sid', {'sid': request.sid}, room=request.sid)
+
+@app.route("/api/match_jobs", methods=["POST"])
+def match_jobs():
+    data = request.get_json()
+    sid = data.get("sid")
+    if not sid:
+        return jsonify({"error": "Missing sid"}), 400
+    uploaded_files = data.get("uploadedFiles")
+    if not uploaded_files:
+        return jsonify({"error": "No files uploaded"}), 400
+    page = data.get("page")
+    if not page:
+        return jsonify({"error": "Missing page number"}), 400
+    print("Matching: ", sid, uploaded_files, page)
+    # Assume 'resume.pdf' is your resume file
+    if True:
+        resume_text = extract_text_from_pdf(f"uploads/{sid}/{uploaded_files}")
+        # Preprocess the resume text
+        resume_tokens = preprocess_text(resume_text)
+        
+        
+        # Example keyword queries
+        global ht
+        print("Architecture docs:", ht.get("architecture"))
+        # Get top matching jobs
+        top_jobs = score_jobs(ht, resume_tokens)  # list of (doc_id, score)
+
+        # Paginate top jobs
+        pages = paginate_results(top_jobs, page_size=10)
+        page_data = get_page(con, pages, page)
+    #socketio.emit('assign_sid', {'sid': request.sid}, room=request.sid)
+    return jsonify({
+        "page": page,
         "total_pages": len(pages),
         "results": page_data
-    }, indent=2))
+    })
 
-    ht.close()
+@app.route('/upload', methods=['POST'])
+def upload():
+    sid = request.form.get('sid')
+    files = request.files.getlist('files')
+
+    if not sid or not files:
+        return jsonify({'message': 'Missing sid or files'}), 400
+
+    sid_folder = os.path.join(UPLOAD_FOLDER, secure_filename(sid))
+    os.makedirs(sid_folder, exist_ok=True)
+
+    for file in files:
+        filename = secure_filename(file.filename)
+        file.save(os.path.join(sid_folder, filename))
+
+    return jsonify({'message': f'{len(files)} file(s) saved to {sid_folder}'}), 200
+
+
+socketio.run(app, host="0.0.0.0", port=5000, debug=True, use_reloader=False)
