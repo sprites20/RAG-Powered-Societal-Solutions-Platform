@@ -26,3 +26,36 @@
     color: #444;
   }
   
+  mark {
+    background-color: yellow;
+    font-weight: bold;
+  }
+
+  .ai-recommendation-box {
+    margin-top: 2rem;
+    padding: 1.5rem;
+    border: 1px solid #ccc;
+    border-radius: 12px;
+    background-color: #f9f9f9;
+  }
+  
+  .ai-recommendation-box h2 {
+    margin-bottom: 1rem;
+  }
+  
+  .ai-section {
+    margin-bottom: 0.75rem;
+  }
+  
+  .ai-section summary {
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 1.05rem;
+  }
+  
+  .ai-section p {
+    margin-left: 1rem;
+    margin-top: 0.5rem;
+    color: #444;
+  }
+  

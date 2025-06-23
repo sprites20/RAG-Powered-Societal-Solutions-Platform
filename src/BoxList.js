@@ -30,6 +30,7 @@ const BoxList = () => {
   const [socket, setSocket] = useState(null);
   const startIdx = (currentPage - 1) * jobsPerPage;
   const [isMatchedJobs, setMatchedJobs] = useState(false);
+  const [deviceId, setDeviceId] = useState("");
   //visibleJobs = jobData.slice(startIdx, startIdx + jobsPerPage);
 
   const handleNext = () => {
@@ -67,6 +68,42 @@ const BoxList = () => {
     return () => socket.disconnect();
   }, []);
 
+  // Utility functions for cookies
+  function setCookie(name, value, days = 365) {
+    const expires = new Date(Date.now() + days * 864e5).toUTCString();
+    document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`;
+  }
+
+  function getCookie(name) {
+    return document.cookie
+      .split("; ")
+      .reduce((r, v) => {
+        const parts = v.split("=");
+        return parts[0] === name ? decodeURIComponent(parts[1]) : r;
+      }, "");
+  }
+
+  function generateUUID() {
+    return crypto.randomUUID(); // use polyfill if needed
+  }
+  
+  // Set device UUID cookie on first load
+  useEffect(() => {
+    let uuid = getCookie("device_uuid");
+    if (!uuid) {
+      uuid = generateUUID();
+      setCookie("device_uuid", uuid);
+    }
+    setDeviceId(uuid);
+    console.log("Device UUID:", deviceId);
+  }, []);
+
+  useEffect(() => {
+    if (deviceId) {
+      console.log("Device UUID (from state):", deviceId);
+    }
+  }, [deviceId]);
+
   const handleDrop = async (event) => {
     event.preventDefault();
     const files = Array.from(event.dataTransfer.files);
@@ -82,6 +119,7 @@ const BoxList = () => {
 
       const formData = new FormData();
       formData.append("sid", sid);
+      formData.append("device_uuid", deviceId);
       files.forEach(file => formData.append("files", file));
 
       try {
@@ -94,6 +132,7 @@ const BoxList = () => {
         alert(result.message);
       } catch (error) {
         console.error("Upload failed:", error);
+        alert("Upload failed.");
       }
     }
   };
@@ -119,6 +158,7 @@ const BoxList = () => {
     try {
       const payload = {
         sid: sid,
+        device_uuid: deviceId,
         page: pageNum,
         uploadedFiles: uploadedFiles[0] // Assuming you're sending files
         // Remove uploadedFiles if you're not sending files
