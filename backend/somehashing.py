@@ -18,7 +18,12 @@ import duckdb
 from collections import defaultdict
 from flask_cors import CORS
 import fitz  # PyMuPDF
+import traceback
+import requests
 
+
+GEMINI_API_KEY = 'YOUR_KEY'  # Replace with your Gemini API key
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
 nltk.download('punkt')
 nltk.download('stopwords')
@@ -421,6 +426,8 @@ if __name__ == "__main__":
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+uuids = {}
+
 @app.route('/job')
 def get_job():
     job_id = request.args.get('id')
@@ -449,10 +456,26 @@ def handle_connect():
     print(f"Client connected with sid: {request.sid}")
     socketio.emit('assign_sid', {'sid': request.sid}, room=request.sid)
 
+@app.route("/api/get_resume", methods=["POST"])
+def get_resume():
+    try:
+        data = request.get_json()
+        print("Received data: ", data)
+        device_uuid = data.get("device_uuid")
+        output = uuids[device_uuid]
+        
+        return jsonify(output)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/match_jobs", methods=["POST"])
 def match_jobs():
     data = request.get_json()
+    print("Matching: ", data)
     sid = data.get("sid")
+    device_uuid = data.get("device_uuid")
+    print("Matching: ", sid, device_uuid)
     if not sid:
         return jsonify({"error": "Missing sid"}), 400
     uploaded_files = data.get("uploadedFiles")
@@ -468,6 +491,12 @@ def match_jobs():
         # Preprocess the resume text
         resume_tokens = preprocess_text(resume_text)
         
+        uuids[device_uuid] = {
+            "resume_tokens": resume_tokens,
+            "resume_text" : resume_text,
+        }
+
+        print(uuids[device_uuid])
         
         # Example keyword queries
         global ht
@@ -502,5 +531,42 @@ def upload():
 
     return jsonify({'message': f'{len(files)} file(s) saved to {sid_folder}'}), 200
 
+@app.route('/api/ai_recommendation', methods=['POST'])
+def ai_recommendation():
+    try:
+        data = request.get_json()
+        prompt = data.get("prompt", "")
+        if not prompt:
+            return jsonify({"error": "Missing prompt"}), 400
+
+        payload = {
+            "contents": [
+                {
+                    "parts": [{"text": prompt}]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.9,
+                "maxOutputTokens": 512,
+                "topP": 1,
+                "topK": 40
+            }
+        }
+
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(GEMINI_API_URL, headers=headers, data=json.dumps(payload))
+
+        if response.ok:
+            result = response.json()
+            # Defensive check for nested structure
+            text = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "No response")
+            return jsonify({"result": text})
+        else:
+            return jsonify({"error": response.text}), response.status_code
+
+    except Exception as e:
+        print("❌ Exception occurred in /api/ai_recommendation:")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 socketio.run(app, host="0.0.0.0", port=5000, debug=True, use_reloader=False)
