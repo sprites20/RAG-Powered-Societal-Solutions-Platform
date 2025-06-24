@@ -259,6 +259,31 @@ if __name__ == "__main__":
     print("python docs:", ht.get("programming")) # Should show [2, 3]
     ht.close()
 """
+def merge_sort_by_score_desc(arr):
+    if len(arr) <= 1:
+        return arr
+
+    mid = len(arr) // 2
+    left = merge_sort_by_score_desc(arr[:mid])
+    right = merge_sort_by_score_desc(arr[mid:])
+
+    return merge_desc(left, right)
+
+def merge_desc(left, right):
+    result = []
+    i = j = 0
+
+    while i < len(left) and j < len(right):
+        if left[i][1] >= right[j][1]:  # sort by score descending
+            result.append(left[i])
+            i += 1
+        else:
+            result.append(right[j])
+            j += 1
+
+    result.extend(left[i:])
+    result.extend(right[j:])
+    return result
 
 def score_jobs(ht, resume_tokens, top_n=10):
     scores = defaultdict(int)
@@ -268,9 +293,9 @@ def score_jobs(ht, resume_tokens, top_n=10):
         if doc_ids:
             for doc_id in doc_ids:
                 scores[doc_id] += 1
-    
-    # Sort job ids by score descending and pick top_n
-    top_jobs = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_n]
+
+    sorted_jobs = merge_sort_by_score_desc(list(scores.items()))
+    top_jobs = sorted_jobs[:top_n]
     
     return top_jobs
 def truncate_text(text, max_len=300):
@@ -311,9 +336,8 @@ def extract_text_from_pdf(pdf_path):
 
 def get_page(con, pages, page_num):
     # Example: send page 1 to client
-    
     page_data = []
-
+    
     for doc_id, score in pages.get(page_num, []):
         job = get_job_snippet(con, doc_id)
         if job:
