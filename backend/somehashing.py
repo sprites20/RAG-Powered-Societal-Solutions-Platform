@@ -28,166 +28,173 @@ GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemin
 nltk.download('punkt')
 nltk.download('stopwords')
 
-class MMapChainedHashTable:
-    TABLE_SIZE = 100_000  # number of buckets
-    SLOT_SIZE = 8         # each slot stores 8-byte offset to chain head (0 = empty)
-    KEY_SIZE = 32         # fixed length for keys (padded/truncated)
-    NODE_HEADER_SIZE = KEY_SIZE + 4 + 4 + 8
-    # Node layout: key(32) + count_of_items(4) + items_region_size(4) + next_node_offset(8)
-    # Items follow immediately after header, variable length: count_of_items * 4-byte integers (example items)
+import mmap, os, struct
 
-    DATA_REGION_SIZE = DATA_REGION_SIZE = 500 * 1024 * 1024  # 2 GB
-    FILE_SIZE = SLOT_SIZE * TABLE_SIZE + DATA_REGION_SIZE
+class MMapChainedHashTable:
+    # ────────────────────────────────────────────────────────────
+    # tunables
+    TABLE_SIZE      = 100_000
+    SLOT_SIZE       = 8
+    KEY_SIZE        = 32
+    MAX_ITEMS       = 64
+    DATA_REGION_MB  = 500
+
+    # ────────────────────────────────────────────────────────────
+    # derived constants
+    NODE_HEADER_SIZE = KEY_SIZE + 4 + 8 + 8  # key + count + next_same + next_other
+    NODE_SIZE        = NODE_HEADER_SIZE + MAX_ITEMS * 4
+    DATA_REGION_SIZE = DATA_REGION_MB * 1024 * 1024
+    FILE_SIZE        = SLOT_SIZE * TABLE_SIZE + DATA_REGION_SIZE
 
     def __init__(self, filename="mmap_chain_hash.dat"):
         self.filename = filename
         self._init_file()
-        self.f = open(self.filename, "r+b")
+        self.f  = open(self.filename, "r+b")
         self.mm = mmap.mmap(self.f.fileno(), self.FILE_SIZE)
-        self.data_start = self.SLOT_SIZE * self.TABLE_SIZE
-        self.next_free_offset = self.data_start
-        # In a real implementation, you'd want to persist and load next_free_offset or free list!
+        self.data_start      = self.SLOT_SIZE * self.TABLE_SIZE
+        self.next_free_off   = self.data_start
 
     def _init_file(self):
         if not os.path.exists(self.filename):
-            print(f"Creating file {self.filename} size {self.FILE_SIZE}")
             with open(self.filename, "wb") as f:
                 f.truncate(self.FILE_SIZE)
 
-    def _hash(self, key):
-        return sum(ord(c) for c in key) % self.TABLE_SIZE
+    def _hash(self, key: str) -> int:
+        return sum(key.encode("utf-8")) % self.TABLE_SIZE
 
-    def _read_slot(self, index):
-        offset = index * self.SLOT_SIZE
-        return struct.unpack('Q', self.mm[offset:offset+self.SLOT_SIZE])[0]
+    def _slot_off(self, index: int) -> int:
+        return index * self.SLOT_SIZE
 
-    def _write_slot(self, index, offset_val):
-        offset = index * self.SLOT_SIZE
-        self.mm[offset:offset+self.SLOT_SIZE] = struct.pack('Q', offset_val)
+    def _read_u64(self, off: int) -> int:
+        return struct.unpack_from("Q", self.mm, off)[0]
 
-    def _read_node(self, offset):
-        header = self.mm[offset:offset+self.NODE_HEADER_SIZE]
-        key_bytes = header[:self.KEY_SIZE]
-        count = struct.unpack('I', header[self.KEY_SIZE:self.KEY_SIZE+4])[0]
-        items_size = struct.unpack('I', header[self.KEY_SIZE+4:self.KEY_SIZE+8])[0]
-        next_node_offset = struct.unpack('Q', header[self.KEY_SIZE+8:self.KEY_SIZE+16])[0]
+    def _write_u64(self, off: int, val: int) -> None:
+        struct.pack_into("Q", self.mm, off, val)
 
-        key = key_bytes.rstrip(b'\x00').decode('utf-8')
-        items_offset = offset + self.NODE_HEADER_SIZE
-        items_bytes = self.mm[items_offset:items_offset+items_size]
-        # Assume items are 4-byte integers
-        items = [struct.unpack('I', items_bytes[i:i+4])[0] for i in range(0, len(items_bytes), 4)]
+    def _read_node(self, off: int):
+        key_bytes = self.mm[off : off + self.KEY_SIZE]
+        count     = struct.unpack_from("I", self.mm, off + self.KEY_SIZE)[0]
+        same_off  = struct.unpack_from("Q", self.mm, off + self.KEY_SIZE + 4)[0]
+        other_off = struct.unpack_from("Q", self.mm, off + self.KEY_SIZE + 12)[0]
+        key       = key_bytes.rstrip(b"\x00").decode("utf-8")
+        base      = off + self.NODE_HEADER_SIZE
+        items     = [struct.unpack_from("I", self.mm, base + i*4)[0] for i in range(count)]
+        return {"key": key, "count": count, "same": same_off, "other": other_off, "off": off, "items": items}
 
-        return {
-            "key": key,
-            "count": count,
-            "items": items,
-            "next": next_node_offset,
-            "offset": offset,
-            "size": self.NODE_HEADER_SIZE + items_size
-        }
+    def _write_empty_node(self, off: int, key: str, same: int = 0, other: int = 0):
+        key_b = key.encode("utf-8")[:self.KEY_SIZE].ljust(self.KEY_SIZE, b"\x00")
+        struct.pack_into(f"{self.KEY_SIZE}sIQQ", self.mm, off, key_b, 0, same, other)
 
-    def _write_node(self, offset, key, items, next_node_offset):
-        key_bytes = key.encode('utf-8')[:self.KEY_SIZE]
-        key_bytes = key_bytes.ljust(self.KEY_SIZE, b'\x00')
-        count = len(items)
-        items_size = count * 4
-        header = key_bytes + struct.pack('I', count) + struct.pack('I', items_size) + struct.pack('Q', next_node_offset)
-        items_bytes = b''.join(struct.pack('I', i) for i in items)
-        self.mm[offset:offset+len(header)] = header
-        self.mm[offset+len(header):offset+len(header)+items_size] = items_bytes
+    def _append_item_to_node(self, node_off: int, doc_id: int):
+        count_off = node_off + self.KEY_SIZE
+        count     = struct.unpack_from("I", self.mm, count_off)[0]
+        if count >= self.MAX_ITEMS:
+            raise ValueError("node already full")
+        items_base = node_off + self.NODE_HEADER_SIZE
+        struct.pack_into("I", self.mm, items_base + count*4, doc_id)
+        struct.pack_into("I", self.mm, count_off, count + 1)
 
-    def _alloc_node(self, size):
-        if self.next_free_offset + size > self.FILE_SIZE:
-            raise Exception("Out of mmap data space!")
-        off = self.next_free_offset
-        self.next_free_offset += size
+    def _alloc_node(self) -> int:
+        if self.next_free_off + self.NODE_SIZE > self.FILE_SIZE:
+            raise RuntimeError("out of data region")
+        off = self.next_free_off
+        self.next_free_off += self.NODE_SIZE
         return off
 
-    def get(self, key):
-        bucket = self._hash(key)
-        node_offset = self._read_slot(bucket)
-        while node_offset != 0:
-            node = self._read_node(node_offset)
+    def insert(self, key: str, doc_ids):
+        if isinstance(doc_ids, int): doc_ids = [doc_ids]
+
+        bucket     = self._hash(key)
+        slot_off   = self._slot_off(bucket)
+        node_off   = self._read_u64(slot_off)
+        prev_other = 0
+
+        while node_off:
+            node = self._read_node(node_off)
             if node["key"] == key:
-                return node["items"]
-            node_offset = node["next"]
-        return None
+                break
+            prev_other = node_off
+            node_off   = node["other"]
 
-    def insert(self, key, items):
-        bucket = self._hash(key)
-        node_offset = self._read_slot(bucket)
+        if node_off:
+            same_off = node_off
+            prev_same = 0
+            while same_off:
+                n = self._read_node(same_off)
+                if n["count"] < self.MAX_ITEMS:
+                    for d in doc_ids[:]:
+                        if d in n["items"]:
+                            doc_ids.remove(d)
+                            continue
+                        if n["count"] == self.MAX_ITEMS:
+                            break
+                        self._append_item_to_node(same_off, d)
+                    if not doc_ids: return
+                prev_same = same_off
+                same_off = n["same"]
 
-        merged_items = set(items)
-        prev_offset = 0
-        chain_head = node_offset
+            while doc_ids:
+                new_off = self._alloc_node()
+                self._write_empty_node(new_off, key)
+                for d in doc_ids[:self.MAX_ITEMS]:
+                    self._append_item_to_node(new_off, d)
+                doc_ids = doc_ids[self.MAX_ITEMS:]
+                self._write_u64(prev_same + self.KEY_SIZE + 4, new_off)
+                prev_same = new_off
+            return
 
-        # Traverse the chain and collect items for this key
-        while node_offset != 0:
-            node = self._read_node(node_offset)
-            if node["key"] == key:
-                merged_items.update(node["items"])
+        while doc_ids:
+            new_off = self._alloc_node()
+            self._write_empty_node(new_off, key)
+            for d in doc_ids[:self.MAX_ITEMS]:
+                self._append_item_to_node(new_off, d)
+            doc_ids = doc_ids[self.MAX_ITEMS:]
+
+            if prev_other == 0:
+                self._write_u64(slot_off, new_off)
             else:
-                prev_offset = node_offset  # Track last non-matching node
-            node_offset = node["next"]
+                self._write_u64(prev_other + self.KEY_SIZE + 12, new_off)
+            prev_other = new_off
 
-        # Remove all nodes for this key by rebuilding the chain without them
-        node_offset = chain_head
-        new_chain_head = 0
-        last_node_offset = 0
-
-        while node_offset != 0:
-            node = self._read_node(node_offset)
-            next_offset = node["next"]
-
-            if node["key"] != key:
-                if new_chain_head == 0:
-                    new_chain_head = node_offset
-                else:
-                    prev_node = self._read_node(last_node_offset)
-                    self._write_node(last_node_offset, prev_node["key"], prev_node["items"], node_offset)
-                last_node_offset = node_offset
-
-            node_offset = next_offset
-
-        if last_node_offset != 0:
-            # Ensure the new tail of the chain points to null
-            prev_node = self._read_node(last_node_offset)
-            self._write_node(last_node_offset, prev_node["key"], prev_node["items"], 0)
-
-        # Now insert the new merged node at head
-        new_node_items = list(merged_items)
-        new_node_size = self.NODE_HEADER_SIZE + len(new_node_items) * 4
-        new_node_offset = self._alloc_node(new_node_size)
-        self._write_node(new_node_offset, key, new_node_items, new_chain_head)
-        self._write_slot(bucket, new_node_offset)
-
-    def remove_doc_id(self, key, doc_id):
-        bucket = self._hash(key)
-        node_offset = self._read_slot(bucket)
-        prev_offset = 0
-        while node_offset != 0:
-            node = self._read_node(node_offset)
+    def get(self, key: str):
+        bucket     = self._hash(key)
+        node_off   = self._read_u64(self._slot_off(bucket))
+        items = []
+        while node_off:
+            node = self._read_node(node_off)
             if node["key"] == key:
-                new_items = [i for i in node["items"] if i != doc_id]
-                if len(new_items) == 0:
-                    # Remove node from chain
-                    if prev_offset == 0:
-                        self._write_slot(bucket, node["next"])
-                    else:
-                        prev_node = self._read_node(prev_offset)
-                        self._write_node(prev_offset, prev_node["key"], prev_node["items"], node["next"])
-                    return
-                else:
-                    # Write updated node
-                    self._write_node(node_offset, key, new_items, node["next"])
-                    return
-            prev_offset = node_offset
-            node_offset = node["next"]
+                while node:
+                    items.extend(node["items"])
+                    node = self._read_node(node["same"]) if node["same"] else None
+                break
+            node_off = node["other"]
+        return items if items else None
+    def remove_doc_id(self, key: str, doc_id: int):
+        bucket   = self._hash(key)
+        node_off = self._read_u64(self._slot_off(bucket))
+
+        while node_off:
+            node = self._read_node(node_off)
+            if node["key"] == key:
+                while node:
+                    items = node["items"]
+                    try:
+                        i = items.index(doc_id)
+                        last_idx = node["count"] - 1
+                        items_base = node["off"] + self.NODE_HEADER_SIZE
+                        if i != last_idx:
+                            last_val = items[last_idx]
+                            struct.pack_into("I", self.mm, items_base + i*4, last_val)
+                        struct.pack_into("I", self.mm, node["off"] + self.KEY_SIZE, last_idx)
+                        return
+                    except ValueError:
+                        node = self._read_node(node["same"]) if node["same"] else None
+                return
+            node_off = node["other"]
     def close(self):
-        self.mm.flush()
-        self.mm.close()
-        self.f.close()
+        self.mm.flush(); self.mm.close(); self.f.close()
+
+
 
 
 # Text preprocessing utils
@@ -512,7 +519,7 @@ if __name__ == "__main__":
     # Create and fill the inverted index
     
     from tqdm import tqdm
-    if False:
+    if True:
         for id, search_text in tqdm(jobs, desc="Processing jobs"):
             process_text_string(ht, search_text, id)
     
@@ -581,7 +588,7 @@ def get_resume():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route("/api/get_page", methods=["POST"])
+@app.route("/api/get_page_api", methods=["POST"])
 def get_page_api():
     data = request.get_json()
     print("Matching: ", data)
