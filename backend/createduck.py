@@ -9,8 +9,9 @@ SELECT
     row_number() OVER () AS id,
     *
 FROM (
-    SELECT * FROM read_csv_auto('archive/postings.csv')
-    LIMIT 100
+    SELECT * FROM read_csv_auto('archive/postings.csv',
+    ignore_errors=true)
+    LIMIT 100000
 );
 """)
 
@@ -18,7 +19,7 @@ FROM (
 descriptions = con.execute("""
     SELECT description
     FROM linkedin_jobs
-    LIMIT 100;
+    LIMIT 10000;
 """).fetchdf()
 
 print(descriptions)

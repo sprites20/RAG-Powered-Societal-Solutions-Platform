@@ -22,7 +22,7 @@ import traceback
 import requests
 
 
-GEMINI_API_KEY = 'YOUR_KEY'  # Replace with your Gemini API key
+GEMINI_API_KEY = 'AIzaSyB6VxiPZ9dtCbk0Ph15ooI4-9GL6AJmHRg'  # Replace with your Gemini API key
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
 nltk.download('punkt')
@@ -36,7 +36,7 @@ class MMapChainedHashTable:
     # Node layout: key(32) + count_of_items(4) + items_region_size(4) + next_node_offset(8)
     # Items follow immediately after header, variable length: count_of_items * 4-byte integers (example items)
 
-    DATA_REGION_SIZE = 500 * 1024 * 1024  # 500 MB for nodes and items
+    DATA_REGION_SIZE = DATA_REGION_SIZE = 500 * 1024 * 1024  # 2 GB
     FILE_SIZE = SLOT_SIZE * TABLE_SIZE + DATA_REGION_SIZE
 
     def __init__(self, filename="mmap_chain_hash.dat"):
@@ -191,6 +191,86 @@ class MMapChainedHashTable:
 
 
 # Text preprocessing utils
+class MergeSort():
+    def __init__(self):
+        pass
+
+    def merge_sort(self, arr):
+        if len(arr) <= 1:
+            return arr  # base case: already sorted
+
+        # Split the array into two halves
+        mid = len(arr) // 2
+        left_half = self.merge_sort(arr[:mid])
+        right_half = self.merge_sort(arr[mid:])
+
+        # Merge the sorted halves
+        return self.merge(left_half, right_half)
+
+    def merge(self, left, right):
+        sorted_arr = []
+        i = j = 0
+
+        # Compare elements from both halves and merge them
+        while i < len(left) and j < len(right):
+            if left[i] <= right[j]:
+                sorted_arr.append(left[i])
+                i += 1
+            else:
+                sorted_arr.append(right[j])
+                j += 1
+
+        # Append remaining elements (if any)
+        sorted_arr.extend(left[i:])
+        sorted_arr.extend(right[j:])
+
+        return sorted_arr
+class SequentialSearch:
+    def __init__(self):
+        pass
+
+    def split(self, text, delimiter=None):
+        if not isinstance(text, str):
+            raise TypeError("Input 'text' must be a string.")
+
+        if not text:
+            return []
+
+        results = []
+        current_word_start = 0
+
+        if delimiter == None or delimiter == '':
+            is_in_whitespace_block = True
+            for i in range(len(text)):
+                if text[i].isspace():
+                    if not is_in_whitespace_block:
+                        results.append(text[current_word_start:i])
+                        is_in_whitespace_block = True
+                    current_word_start = i + 1
+                else:
+                    if is_in_whitespace_block:
+                        current_word_start = i
+                        is_in_whitespace_block = False
+            if not is_in_whitespace_block:
+                results.append(text[current_word_start:])
+        else:
+            delimiter_length = len(delimiter)
+            i = 0
+            while i <= len(text) - delimiter_length:
+                if text[i:i + delimiter_length] == delimiter:
+                    results.append(text[current_word_start:i])
+                    current_word_start = i + delimiter_length
+                    i += delimiter_length
+                else:
+                    i += 1
+            results.append(text[current_word_start:])
+
+        return results
+
+# Tokenizer using whitespace
+def tokenize(text):
+    s = SequentialSearch()
+    return s.split(text)
 
 def preprocess_text(text):
     if not text:
@@ -215,7 +295,7 @@ def preprocess_text(text):
     text = re.sub(r'\s+', ' ', text).strip()
 
     # Tokenize
-    tokens = word_tokenize(text)
+    tokens = tokenize(text)
 
     # Remove punctuation and stopwords
     tokens = [t for t in tokens if t not in string.punctuation]
@@ -259,33 +339,41 @@ if __name__ == "__main__":
     print("python docs:", ht.get("programming")) # Should show [2, 3]
     ht.close()
 """
-def merge_sort_by_score_desc(arr):
-    if len(arr) <= 1:
-        return arr
 
-    mid = len(arr) // 2
-    left = merge_sort_by_score_desc(arr[:mid])
-    right = merge_sort_by_score_desc(arr[mid:])
+class MergeSort():
+    def __init__(self):
+        pass
 
-    return merge_desc(left, right)
+    def merge_sort(self, arr):
+        if len(arr) <= 1:
+            return arr  # base case: already sorted
 
-def merge_desc(left, right):
-    result = []
-    i = j = 0
+        # Split the array into two halves
+        mid = len(arr) // 2
+        left_half = self.merge_sort(arr[:mid])
+        right_half = self.merge_sort(arr[mid:])
 
-    while i < len(left) and j < len(right):
-        if left[i][1] >= right[j][1]:  # sort by score descending
-            result.append(left[i])
-            i += 1
-        else:
-            result.append(right[j])
-            j += 1
+        # Merge the sorted halves
+        return self.merge(left_half, right_half)
 
-    result.extend(left[i:])
-    result.extend(right[j:])
-    return result
+    def merge(self, left, right):
+        result = []
+        i = j = 0
 
-def score_jobs(ht, resume_tokens, top_n=10):
+        while i < len(left) and j < len(right):
+            if left[i][1] >= right[j][1]:  # sort by score descending
+                result.append(left[i])
+                i += 1
+            else:
+                result.append(right[j])
+                j += 1
+
+        result.extend(left[i:])
+        result.extend(right[j:])
+        return result
+
+
+def score_jobs(ht, resume_tokens, top_n=1000):
     scores = defaultdict(int)
     
     for token in set(resume_tokens):  # unique tokens to avoid double counting
@@ -293,11 +381,13 @@ def score_jobs(ht, resume_tokens, top_n=10):
         if doc_ids:
             for doc_id in doc_ids:
                 scores[doc_id] += 1
-
-    sorted_jobs = merge_sort_by_score_desc(list(scores.items()))
+    
+    m = MergeSort()
+    sorted_jobs = m.merge_sort(list(scores.items()))
     top_jobs = sorted_jobs[:top_n]
     
     return top_jobs
+
 def truncate_text(text, max_len=300):
     if len(text) > max_len:
         return text[:max_len].rstrip() + "..."
@@ -313,17 +403,19 @@ def paginate_results(results, page_size=10):
 
 def get_job_snippet(con, doc_id):
     result = con.execute("""
-        SELECT title, description 
+        SELECT title, description, location, company_name
         FROM linkedin_jobs
         WHERE id = ?
     """, [doc_id]).fetchone()
     if result:
-        title, job_desc = result
+        title, job_desc, location, company = result
         return {
             "doc_id": doc_id,
             "title": title,
             "score": None,  # optionally updated later
-            "snippet": truncate_text(job_desc)
+            "snippet": truncate_text(job_desc),
+            "location" : location or None,
+            "company_name" : company or None
         }
 import fitz  # PyMuPDF
 
@@ -405,14 +497,11 @@ if __name__ == "__main__":
                     description,
                     skills_desc,
                     formatted_experience_level,
-                    formatted_work_type,
                     location,
-                    CASE WHEN remote_allowed = TRUE THEN 'remote' ELSE '' END,
-                    work_type,
                     company_name
                 ) AS search_text
         FROM linkedin_jobs
-        LIMIT 100;
+        LIMIT 1000;
     """).fetchall()
 
     # Assume 'resume.pdf' is your resume file
@@ -422,17 +511,16 @@ if __name__ == "__main__":
     
     # Create and fill the inverted index
     
-    
+    from tqdm import tqdm
     if False:
-        for id, search_text in jobs:
-            print("Processing id:", id)
+        for id, search_text in tqdm(jobs, desc="Processing jobs"):
             process_text_string(ht, search_text, id)
     
     # Example keyword queries
-    print("Architecture docs:", ht.get("architecture"))
+    #print("Architecture docs:", ht.get("architecture"))
     # Get top matching jobs
     top_jobs = score_jobs(ht, resume_tokens)  # list of (doc_id, score)
-
+    print("Top Jobs", top_jobs)
     # Paginate top jobs
     pages = paginate_results(top_jobs, page_size=10)
     page_data = get_page(con, pages, 1)
@@ -451,6 +539,7 @@ UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 uuids = {}
+user_pages = {}
 
 @app.route('/job')
 def get_job():
@@ -492,6 +581,31 @@ def get_resume():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/get_page", methods=["POST"])
+def get_page_api():
+    data = request.get_json()
+    print("Matching: ", data)
+    sid = data.get("sid")
+    device_uuid = data.get("device_uuid")
+    print("Matching: ", sid, device_uuid)
+    if not sid:
+        return jsonify({"error": "Missing sid"}), 400
+    if not device_uuid:
+        return jsonify({"error": "Missing device_uuid"}), 400
+    page = data.get("page")
+    if not page:
+        return jsonify({"error": "Missing page number"}), 400
+    print("Matching: ", sid, page)
+
+    if True:
+        pages = user_pages[device_uuid]
+        page_data = get_page(con, pages, page)
+    #socketio.emit('assign_sid', {'sid': request.sid}, room=request.sid)
+    return jsonify({
+        "page": page,
+        "total_pages": len(pages),
+        "results": page_data
+    })
 
 @app.route("/api/match_jobs", methods=["POST"])
 def match_jobs():
@@ -527,9 +641,10 @@ def match_jobs():
         print("Architecture docs:", ht.get("architecture"))
         # Get top matching jobs
         top_jobs = score_jobs(ht, resume_tokens)  # list of (doc_id, score)
-
+        #print("Top Jobs", top_jobs)
         # Paginate top jobs
         pages = paginate_results(top_jobs, page_size=10)
+        user_pages[device_uuid] = pages
         page_data = get_page(con, pages, page)
     #socketio.emit('assign_sid', {'sid': request.sid}, room=request.sid)
     return jsonify({
@@ -571,7 +686,7 @@ def ai_recommendation():
             ],
             "generationConfig": {
                 "temperature": 0.9,
-                "maxOutputTokens": 512,
+                "maxOutputTokens": 1024,
                 "topP": 1,
                 "topK": 40
             }
