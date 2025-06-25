@@ -33,12 +33,51 @@ const BoxList = () => {
   const [deviceId, setDeviceId] = useState("");
   //visibleJobs = jobData.slice(startIdx, startIdx + jobsPerPage);
 
+  const get_page = async () => {
+    setIsMatching(true);
+    setVisibleJobs([]);
+    try {
+      const payload = {
+        sid: sid,
+        device_uuid: deviceId,
+        page: currentPage,
+      };
+      const response = await fetch("http://localhost:5000/api/get_page_api", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      
+      const result = await response.json();
+      console.log(result);
+      setTotalPages(result.total_pages);
+      const matchedJobs = result.results.map((job, index) => ({
+        id: job.doc_id || index + 1,
+        title: job.title || "No Title Provided", // or any placeholder title
+        description: job.snippet || "No description provided.",
+        location: job.location || "Unknown", // or from `job` if available
+        company_name: job.company_name || "Unknown" // or from `job` if available
+      }));
+      
+      setVisibleJobs(matchedJobs);
+      setIsMatching(false);
+      setMatchedJobs(true);
+    } catch (error) {
+      console.error("Job match error:", error);
+      setMatchedJobs(false);
+    } finally {
+      setIsMatching(false);
+    }
+  };
+
   const handleNext = () => {
     if (currentPage < totalPages) setCurrentPage(currentPage + 1);
+    get_page();
   };
 
   const handlePrev = () => {
     if (currentPage > 1) setCurrentPage(currentPage - 1);
+    get_page();
     //Request that page in the server
   };
 
@@ -171,11 +210,14 @@ const BoxList = () => {
       
       const result = await response.json();
       console.log(result);
+      setTotalPages(result.total_pages);
+      setCurrentPage(1);
       const matchedJobs = result.results.map((job, index) => ({
         id: job.doc_id || index + 1,
         title: job.title || "No Title Provided", // or any placeholder title
         description: job.snippet || "No description provided.",
-        location: "Unknown" // or from `job` if available
+        location: job.location || "Unknown", // or from `job` if available
+        company_name: job.company_name || "Unknown" // or from `job` if available
       }));
       
       setVisibleJobs(matchedJobs);
@@ -293,6 +335,7 @@ const BoxList = () => {
             <h3 className="job-title">{job.title}</h3>
             <p className="job-description">{truncateDescription(job.description, 500)}</p>
             <p className="job-location">Location: {job.location}</p>
+            <p className="job-location">Company: {job.company_name}</p>
             {/* Add more job details here */}
           </div>
         ))}

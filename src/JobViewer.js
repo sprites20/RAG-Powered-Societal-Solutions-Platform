@@ -215,83 +215,97 @@ function JobViewer() {
 
   return (
     <div className="job-viewer-container">
-      <h1 className="job-viewer-title">{job.title}</h1>
+      <h1 className="job-viewer-title">{job?.title || "No Title Provided"}</h1>
+  
       <p className="job-viewer-text">
-        <span className="job-viewer-label">Company:</span> {job.company_name}
+        <span className="job-viewer-label">Company:</span> {job?.company_name || "N/A"}
       </p>
+  
       <p className="job-viewer-text">
-        <span className="job-viewer-label">Location:</span> {job.location}
+        <span className="job-viewer-label">Location:</span> {job?.location || "N/A"}
       </p>
+  
       <p className="job-viewer-text">
         <span className="job-viewer-label">Description:</span>{" "}
-        <span dangerouslySetInnerHTML={{
-          __html: highlightDescriptionWithBoyerMoore(job.description, resumeTokens)
-        }} />
+        <span
+          dangerouslySetInnerHTML={{
+            __html: job?.description
+              ? highlightDescriptionWithBoyerMoore(job.description, resumeTokens)
+              : "<i>No description provided.</i>",
+          }}
+        />
       </p>
+  
       <p className="job-viewer-text">
-      <span className="job-viewer-label">Skills:</span>{" "}
-        <span dangerouslySetInnerHTML={{
-          __html: highlightDescriptionWithBoyerMoore(job.skills_desc, resumeTokens)
-        }} />
+        <span className="job-viewer-label">Skills:</span>{" "}
+        <span
+          dangerouslySetInnerHTML={{
+            __html: job?.skills_desc
+              ? highlightDescriptionWithBoyerMoore(job.skills_desc, resumeTokens)
+              : "<i>No skills listed.</i>",
+          }}
+        />
       </p>
+  
       <p className="job-viewer-text">
-        <span className="job-viewer-label">Work Type:</span> {job.work_type}
+        <span className="job-viewer-label">Work Type:</span> {job?.work_type || "N/A"}
       </p>
+  
       <p className="job-viewer-text">
-        <span className="job-viewer-label">Salary:</span> {job.min_salary}–{job.max_salary} {job.currency}
+        <span className="job-viewer-label">Salary:</span>{" "}
+        {job?.min_salary && job?.max_salary
+          ? `${job.min_salary}–${job.max_salary} ${job?.currency || ""}`
+          : "Not specified"}
       </p>
-
+  
       <div className="ai-recommendation-box">
-    <h2>🤖 AI Recommendations</h2>
-
-    <details className="ai-section" onClick={() => handleExpand("job_fit")}>
-        <summary>✅ Job Fit</summary>
-        {loading.job_fit ? (
-          <p>Loading...</p>
-        ) : aiResponses.job_fit ? (
-          <ReactMarkdown>{aiResponses.job_fit}</ReactMarkdown>
-        ) : (
-          <p>Click to generate recommendation.</p>
-        )}
-      </details>
-
-      <details className="ai-section" onClick={() => handleExpand("tips")}>
-        <summary>💡 Tips for Applying</summary>
-        {loading.tips ? (
-          <p>Loading...</p>
-        ) : aiResponses.tips ? (
-          <ReactMarkdown>{aiResponses.tips}</ReactMarkdown>
-        ) : (
-          <p>Click to generate recommendation.</p>
-        )}
-      </details>
-
-      <details className="ai-section" onClick={() => handleExpand("skill_gap")}>
-        <summary>🧠 Skill Gap and Recommended Courses</summary>
-        {loading.skill_gap ? (
-          <p>Loading...</p>
-        ) : aiResponses.skill_gap ? (
-          <ReactMarkdown>{aiResponses.skill_gap}</ReactMarkdown>
-        ) : (
-          <p>Click to generate recommendation.</p>
-        )}
-      </details>
-
-      <details className="ai-section" onClick={() => handleExpand("legitimacy")}>
-        <summary>🔍 Job Legitimacy</summary>
-        {loading.legitimacy ? (
-          <p>Loading...</p>
-        ) : aiResponses.legitimacy ? (
-          <ReactMarkdown>{aiResponses.legitimacy}</ReactMarkdown>
-        ) : (
-          <p>Click to generate recommendation.</p>
-        )}
-      </details>
+        <h2>🤖 AI Recommendations</h2>
+  
+        <details className="ai-section" onClick={() => handleExpand("job_fit")}>
+          <summary>✅ Job Fit</summary>
+          {loading.job_fit ? (
+            <p>Loading...</p>
+          ) : aiResponses.job_fit ? (
+            <ReactMarkdown>{aiResponses.job_fit}</ReactMarkdown>
+          ) : (
+            <p>Click to generate recommendation.</p>
+          )}
+        </details>
+  
+        <details className="ai-section" onClick={() => handleExpand("tips")}>
+          <summary>💡 Tips for Applying</summary>
+          {loading.tips ? (
+            <p>Loading...</p>
+          ) : aiResponses.tips ? (
+            <ReactMarkdown>{aiResponses.tips}</ReactMarkdown>
+          ) : (
+            <p>Click to generate recommendation.</p>
+          )}
+        </details>
+  
+        <details className="ai-section" onClick={() => handleExpand("skill_gap")}>
+          <summary>🧠 Skill Gap and Recommended Courses</summary>
+          {loading.skill_gap ? (
+            <p>Loading...</p>
+          ) : aiResponses.skill_gap ? (
+            <ReactMarkdown>{aiResponses.skill_gap}</ReactMarkdown>
+          ) : (
+            <p>Click to generate recommendation.</p>
+          )}
+        </details>
+  
+        <details className="ai-section" onClick={() => handleExpand("legitimacy")}>
+          <summary>🔍 Job Legitimacy</summary>
+          {loading.legitimacy ? (
+            <p>Loading...</p>
+          ) : aiResponses.legitimacy ? (
+            <ReactMarkdown>{aiResponses.legitimacy}</ReactMarkdown>
+          ) : (
+            <p>Click to generate recommendation.</p>
+          )}
+        </details>
+      </div>
     </div>
-
-    </div>
-
-    
   );
 }
 
