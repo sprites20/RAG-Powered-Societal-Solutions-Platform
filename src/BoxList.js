@@ -199,7 +199,12 @@ const BoxList = () => {
         sid: sid,
         device_uuid: deviceId,
         page: pageNum,
-        uploadedFiles: uploadedFiles[0] // Assuming you're sending files
+        uploadedFiles: uploadedFiles[0], // Assuming you're sending files
+        person_info: {
+          skills: skills || "",
+          experience: experience || "",
+          preferences: preferences || ""
+        }
         // Remove uploadedFiles if you're not sending files
       };
       const response = await fetch("http://localhost:5000/api/match_jobs", {
@@ -261,7 +266,8 @@ const BoxList = () => {
   return (
     <div className="box-list-container">
       {!isMatchedJobs && <div className="application-form">
-        <h2>Your Application Details</h2>
+        <h2>Job Matching Platform</h2>
+        <h4>Your Application Details</h4>
         <div className="form-group">
           <label htmlFor="skills">Skills:</label>
           <input 

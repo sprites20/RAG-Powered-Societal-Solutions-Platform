@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import axios from 'axios';
 import './JobViewer.css';
-
+import BoyerMooreSearcher from './utils/BoyerMooreSearcher'; // Adjust the path as needed
 
 function JobViewer() {
   const [searchParams] = useSearchParams();
@@ -85,31 +85,7 @@ function JobViewer() {
     return table;
   }
   
-  function boyerMooreSearch(text, pattern) {
-    const matches = [];
-    const badChar = buildBadCharTable(pattern);
-    let shift = 0;
   
-    const m = pattern.length;
-    const n = text.length;
-  
-    while (shift <= n - m) {
-      let j = m - 1;
-  
-      while (j >= 0 && pattern[j].toLowerCase() === text[shift + j].toLowerCase()) {
-        j--;
-      }
-  
-      if (j < 0) {
-        matches.push(shift);
-        shift += (shift + m < n) ? m - badChar[text.charCodeAt(shift + m)] || 1 : 1;
-      } else {
-        shift += Math.max(1, j - badChar[text.charCodeAt(shift + j)] || -1);
-      }
-    }
-  
-    return matches;
-  }
   function highlightDescription(description, tokens) {
     if (!tokens || tokens.length === 0) return description;
   
@@ -120,45 +96,67 @@ function JobViewer() {
     return description.replace(regex, '<mark>$1</mark>');
   }
 
-  function highlightDescriptionWithBoyerMoore(description, tokens) {
-    if (!tokens || tokens.length === 0) return description;
-  
+  const highlightDescriptionWithBoyerMoore = (description, tokens) => {
+    if (!tokens || tokens.length === 0 || !description) {
+      return description;
+    }
+
     const lowerDesc = description.toLowerCase();
     const markPositions = [];
-  
+
+    // Loop through each token and perform Boyer-Moore search
     for (let token of tokens) {
+      // Ensure token is trimmed and not empty
       token = token.trim();
       if (!token) continue;
-  
-      const positions = boyerMooreSearch(lowerDesc, token.toLowerCase());
+
+      // Instantiate BoyerMooreSearcher for each token
+      // We pass the lowercase token to the searcher's constructor
+      const searcher = new BoyerMooreSearcher(token.toLowerCase());
+      
+      // Get all positions where the token matches in the lowercased description
+      const positions = searcher.search(lowerDesc);
+      
+      // Store the start and end positions for highlighting
       for (let pos of positions) {
         markPositions.push({ start: pos, end: pos + token.length });
       }
     }
-  
-    // Sort and merge overlapping highlights
+
+    // If no matches found for any token, return the original description
+    if (markPositions.length === 0) {
+      return description;
+    }
+
+    // Sort and merge overlapping highlight ranges
     markPositions.sort((a, b) => a.start - b.start);
     const merged = [];
     for (let pos of markPositions) {
       if (!merged.length || merged[merged.length - 1].end < pos.start) {
-        merged.push(pos);
+        merged.push(pos); // Add new non-overlapping range
       } else {
+        // Merge with previous overlapping range
         merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, pos.end);
       }
     }
-  
-    // Build final string with <mark>
+
+    // Build the final HTML string with <mark> tags
     let result = '';
-    let lastIndex = 0;
+    let lastIndex = 0; // Tracks the last position processed in the original description
+
     for (let { start, end } of merged) {
+      // Add the text segment before the current highlight
       result += description.slice(lastIndex, start);
+      // Add the highlighted text segment
       result += `<mark>${description.slice(start, end)}</mark>`;
+      // Update lastIndex to the end of the current highlight
       lastIndex = end;
     }
+    // Add any remaining text after the last highlight
     result += description.slice(lastIndex);
-  
+
     return result;
-  }
+  };
   useEffect(() => {
     if (!id) return;
     axios
